@@ -1,0 +1,31 @@
+{
+  "name": "bgit",
+  "version": "0.1.0",
+  "description": "bgit (backup git) - versioned backups that work on any mounted storage (SD card, NAS, USB disk, Nutstore/cloud mounts) with optional compressed archives (zip, tar, tar.gz, tar.bz2, tar.xz, tar.zst, gz).",
+  "license": "MIT",
+  "bin": {
+    "bgit": "bin/bgit.js"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "selftest": "node tools/selftest.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "private": true,
+  "keywords": [
+    "backup",
+    "versioned",
+    "archive",
+    "sd",
+    "nas",
+    "tar",
+    "zip"
+  ]
+}
