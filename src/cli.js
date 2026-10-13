@@ -193,6 +193,11 @@ async function cmdArchive(opts, say) {
     onProgress: (p) => {
       if (p.phase === 'collect') say(`  collecting ${p.count} files...`);
       if (p.phase === 'archive-done') say(`  done: ${human(p.size)} (${p.count} files)`);
+      if (p.phase === 'skipped') {
+        say(`  skipped : ${p.files.length} file(s) gone or unreadable while packing`);
+        for (const s of p.files.slice(0, 10)) say(`            ${s.rel}  (${s.reason})`);
+        if (p.files.length > 10) say(`            ... and ${p.files.length - 10} more`);
+      }
     },
   });
   say(`  wrote   : ${res.path}`);

@@ -136,10 +136,17 @@ async function createArchive({ src, outDir, name, format = 'zip', excludes = [],
   // tar-based
   const entries = await collectEntries(absSrc, excludes, onProgress);
 
+  // A live source tree churns: files vanish or shrink between the walk and the
+  // moment we pack them. tarStream skips/pads those instead of corrupting the
+  // archive; collect them so the caller can report what was left out.
+  const skipped = [];
+  const onSkip = (info) => skipped.push(info);
+  const tarBlocks = () => tarStream(entries, onSkip);
+
   if (fmt.kind === 'tar') {
-    await pipeline(tarStream(entries), fs.createWriteStream(outPath));
+    await pipeline(tarBlocks(), fs.createWriteStream(outPath));
   } else if (fmt.kind === 'tar+gz') {
-    await pipeline(tarStream(entries), zlib.createGzip({ level: 6 }), fs.createWriteStream(outPath));
+    await pipeline(tarBlocks(), zlib.createGzip({ level: 6 }), fs.createWriteStream(outPath));
   } else if (fmt.kind === 'tar+zst') {
     if (typeof zlib.createZstdCompress !== 'function') {
       const err = new Error(
@@ -148,7 +155,7 @@ async function createArchive({ src, outDir, name, format = 'zip', excludes = [],
       err.code = 'NO_ZSTD';
       throw err;
     }
-    await pipeline(tarStream(entries), zlib.createZstdCompress(), fs.createWriteStream(outPath));
+    await pipeline(tarBlocks(), zlib.createZstdCompress(), fs.createWriteStream(outPath));
   } else {
     // tar -> external compressor (bzip2/xz) -> file.
     // The compressor reads tar on stdin and writes compressed bytes on stdout,
@@ -159,7 +166,7 @@ async function createArchive({ src, outDir, name, format = 'zip', excludes = [],
       proc.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`${fmt.bin} exited ${code}`))));
     });
     await Promise.all([
-      pipeline(tarStream(entries), proc.stdin),
+      pipeline(tarBlocks(), proc.stdin),
       pipeline(proc.stdout, fs.createWriteStream(outPath)),
       done,
     ]);
@@ -167,7 +174,8 @@ async function createArchive({ src, outDir, name, format = 'zip', excludes = [],
 
   const st = await fsp.stat(outPath);
   onProgress({ phase: 'archive-done', out: outPath, size: st.size, count: entries.length });
-  return { path: outPath, format: fmtName, size: st.size, count: entries.length };
+  if (skipped.length) onProgress({ phase: 'skipped', files: skipped });
+  return { path: outPath, format: fmtName, size: st.size, count: entries.length, skipped };
 }
 
 async function collectEntries(src, excludes, onProgress) {

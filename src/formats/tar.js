@@ -104,22 +104,64 @@ function paxPathName(name) {
 
 /**
  * Async generator yielding tar blocks for a list of files.
+ *
+ * Built for a LIVE source tree: a file can disappear between the directory walk
+ * and the moment we pack it (browser metrics, logs, temp files all churn), and
+ * one can be truncated while we are reading it. Both are handled here instead
+ * of blowing up the whole archive:
+ *   - unreadable file        -> skipped, reported through onSkip
+ *   - shorter than expected  -> zero padded to the recorded size, reported
+ * The size is re-read with fstat right before the header is written, so the
+ * header matches the bytes that follow (a stale size would desynchronise every
+ * later entry, i.e. silently produce a corrupt archive).
+ *
  * @param {Array<{rel:string, abs:string, size:number, mtimeMs:number}>} entries
+ * @param {(info:{rel:string, reason:string}) => void} [onSkip]
  */
-async function* tarStream(entries) {
+async function* tarStream(entries, onSkip = () => {}) {
   const fsp = require('fs').promises;
   for (const e of entries) {
     const name = e.rel;
-    const needsPax = !ustarSplit(name) || e.size > 0o77777777777;
-    if (needsPax) {
-      yield paxHeader(name, e.size, e.mtimeMs, { path: name });
-    }
-    yield header({ name, size: e.size, mtimeMs: e.mtimeMs, type: '0' });
-    // file data in 512-byte blocks
-    const fh = await fsp.open(e.abs, 'r');
+
+    // Open BEFORE emitting anything: a header with no data behind it would
+    // desynchronise the stream, so an unopenable file has to be dropped here.
+    let fh;
+    let size;
     try {
+      fh = await fsp.open(e.abs, 'r');
+      size = (await fh.stat()).size;
+      // The size recorded during the walk can be stale -- the file may be being
+      // written right now. The header has to describe the bytes we actually
+      // store, so use the fresh size (a truncated file is then stored as the
+      // empty file it has become, never as a header promising data that is
+      // gone) and report the drift so a moving file never passes silently.
+      if (e.size !== size) onSkip({ rel: name, reason: `size changed ${e.size} -> ${size} before packing` });
+    } catch (err) {
+      if (fh) await fh.close().catch(() => {});
+      onSkip({ rel: name, reason: err.code || err.message });
+      continue;
+    }
+
+    try {
+      // ustar holds the name in prefix(155)+name(100) and the size in 11 octal
+      // digits -- 8 GiB max. Anything bigger needs a PAX record, otherwise
+      // writeOctal() truncates the value and the archive lies about its size
+      // (a 10 GB file would be recorded as 2 GB).
+      const needPath = !ustarSplit(name);
+      const needSize = size > 0o77777777777;
+      if (needPath || needSize) {
+        const records = {};
+        if (needPath) records.path = name;
+        if (needSize) records.size = size;
+        yield paxHeader(name, size, e.mtimeMs, records);
+      }
+      // PAX records supersede the ustar fields (POSIX), so the size field is a
+      // placeholder for oversized files -- the reading tar takes the PAX value.
+      yield header({ name, size: needSize ? 0 : size, mtimeMs: e.mtimeMs, type: '0' });
+
+      // Stream exactly `size` bytes, whatever the file does meanwhile.
       const buf = Buffer.alloc(64 * 1024);
-      let remaining = e.size;
+      let remaining = size;
       while (remaining > 0) {
         const toRead = Math.min(buf.length, remaining);
         const { bytesRead } = await fh.read(buf, 0, toRead, null);
@@ -127,11 +169,22 @@ async function* tarStream(entries) {
         yield Buffer.from(buf.subarray(0, bytesRead));
         remaining -= bytesRead;
       }
+      if (remaining > 0) {
+        // Truncated under us: pad with zeros (what GNU tar does) so the next
+        // entry still starts where the reader expects it.
+        const zeros = Buffer.alloc(Math.min(buf.length, 1 << 20), 0);
+        onSkip({ rel: name, reason: `shrank while reading, padded ${remaining} zero bytes` });
+        while (remaining > 0) {
+          const n = Math.min(zeros.length, remaining);
+          yield zeros.subarray(0, n);
+          remaining -= n;
+        }
+      }
+      const pad = (BLOCK - (size % BLOCK)) % BLOCK;
+      if (pad) yield Buffer.alloc(pad, 0);
     } finally {
       await fh.close();
     }
-    const pad = (BLOCK - (e.size % BLOCK)) % BLOCK;
-    if (pad) yield Buffer.alloc(pad, 0);
   }
   // two zero blocks terminate the archive
   yield Buffer.alloc(BLOCK * 2, 0);
