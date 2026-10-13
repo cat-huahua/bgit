@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# bgit launcher - runs the CLI from this folder.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec node "$DIR/bin/bgit.js" "$@"
