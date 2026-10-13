@@ -8,6 +8,7 @@
   },
   "main": "src/index.js",
   "scripts": {
+    "start": "node bin/bgit.js",
     "selftest": "node tools/selftest.js"
   },
   "engines": {

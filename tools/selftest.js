@@ -87,6 +87,40 @@ async function testSync() {
 }
 
 // ---------------------------------------------------------------------------
+async function testArchiveOnly() {
+  console.log('\narchive-only CLI');
+  const base = tmpdir('archive-only');
+  try {
+    const src = path.join(base, 'src');
+    const dst = path.join(base, 'dst');
+    fs.mkdirSync(src);
+    fs.mkdirSync(dst);
+    fs.writeFileSync(path.join(src, 'note.txt'), 'NEW');
+    fs.writeFileSync(path.join(dst, 'note.txt'), 'OLD');
+    fs.writeFileSync(path.join(dst, 'gone.txt'), 'KEEP');
+    const args = [path.join(__dirname, '../bin/bgit.js'), 'sync',
+      '--src', src, '--dst', dst, '--archive-only', '--format', 'tar'];
+    const dry = execFileSync(process.execPath, args, { encoding: 'utf8' });
+    assert.ok(!dry.includes('bgit sync'), 'dry run skips the sync engine');
+    assert.deepStrictEqual(fs.readdirSync(dst).sort(), ['gone.txt', 'note.txt']);
+    ok('archive-only dry run leaves destination unchanged');
+
+    execFileSync(process.execPath, [...args, '--commit']);
+    const files = fs.readdirSync(dst);
+    const archives = files.filter((name) => name.endsWith('.tar'));
+    assert.strictEqual(archives.length, 1);
+    assert.deepStrictEqual(files.filter((name) => !name.endsWith('.tar')).sort(), ['gone.txt', 'note.txt']);
+    assert.strictEqual(fs.readFileSync(path.join(dst, 'note.txt'), 'utf8'), 'OLD');
+    assert.strictEqual(fs.readFileSync(path.join(dst, 'gone.txt'), 'utf8'), 'KEEP');
+    const restored = path.join(base, 'restored');
+    await extractArchive(path.join(dst, archives[0]), restored);
+    assert.strictEqual(fs.readFileSync(path.join(restored, 'note.txt'), 'utf8'), 'NEW');
+    ok('archive-only commit creates snapshot without syncing destination');
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
 async function testFormats() {
   console.log('\narchive formats');
   const base = tmpdir('arch');
@@ -171,6 +205,7 @@ function testStorage() {
 async function main() {
   console.log('bgit self test');
   await testSync();
+  await testArchiveOnly();
   await testFormats();
   testStorage();
   console.log(`\nAll ${passed} checks passed.`);

@@ -259,13 +259,13 @@ async function main(argv) {
   const cmd = opts._[0];
   if (opts.help || !cmd) {
     console.log(HELP);
-    return opts.help ? 0 : 1;
+    return 0;
   }
 
   try {
     switch (cmd) {
       case 'sync': {
-        const { plan } = await cmdSync(opts, say);
+        if (!opts.archiveOnly) await cmdSync(opts, say);
         if (opts.archive) {
           say('');
           await cmdArchive(opts, say);

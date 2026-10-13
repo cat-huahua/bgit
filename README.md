@@ -148,6 +148,9 @@ cd bgit
 npm link          # optional: puts `bgit` on your PATH
 # or run it directly
 node bin/bgit.js --help
+# or start via npm (pass CLI arguments after --)
+npm start
+npm start -- sync --src ~/Documents --dst /mnt/nas/backups
 ```
 
 Requires Node.js 18+ (Node 22+ for `tar.zst`).
